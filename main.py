@@ -16,7 +16,7 @@ Revision History
 """
 
 DEBUG = True
-PORT = 10000
+PORT = 10001
 USER_NAME = "crustacean_cheapskate"
 # TODO - change your method of saving information from the very rudimentary method here
 hand = [] # list of cards in our hand
