@@ -15,10 +15,9 @@ Revision History
 1.1 - Very basic test player
 """
 
-# TODO - Change the PORT and USER_NAME Values before running
 DEBUG = True
-PORT = 8001
-USER_NAME = "jsmith"
+PORT = 10000
+USER_NAME = "crustacean_cheapskate"
 # TODO - change your method of saving information from the very rudimentary method here
 hand = [] # list of cards in our hand
 discard = [] # list of cards organized as a stack
