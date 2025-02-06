@@ -1,26 +1,117 @@
-import requests
-from fastapi import FastAPI
-import fastapi
-from pydantic import BaseModel
-import uvicorn
+import json
+import logging
 import os
 import signal
-import logging
+import random
+import fastapi
+import requests
+import uvicorn
+from fastapi import FastAPI
+from pydantic import BaseModel
+# import pytest
 
 """
-By Todd Dole, Revision 1.1
+By Javidan Aghayev
 Written for Hardin-Simmons CSCI-4332 Artificial Intelligence
 Revision History
 1.0 - API setup
 1.1 - Very basic test player
+1.2 - Bugs fixed and player improved, should no longer forfeit
 """
+
+
+def is_valid_move(move):
+    """Check if a move (card) is valid."""
+    # Implement any specific validation for moves (e.g., checking for sets or runs)
+    return True  # Placeholder, you can add more complex rules later.
+
+
+class GameState:
+    def __init__(self):
+        self.hand = []  # List to store cards in the player's hand
+        self.discard_pile = []  # List to store discarded cards
+        self.stock = []  # List to store cards in the stockpile
+        self.is_game_over = False  # To track if the game is over
+
+    def draw_card(self, source):
+        """Draw a card from the stock or discard pile."""
+        if source == "stock" and self.stock:
+            card = self.stock.pop()
+        elif source == "discard" and self.discard_pile:
+            card = self.discard_pile.pop()
+        else:
+            return None
+        self.hand.append(card)
+        return card
+
+    def discard_card(self, card):
+        """Discard a card from the player's hand."""
+        if card in self.hand:
+            self.hand.remove(card)
+            self.discard_pile.append(card)
+            return card
+        return None
+
+    def get_game_state(self):
+        """Return the current state of the game."""
+        return {
+            "hand": self.hand,
+            "discard_pile": self.discard_pile,
+            "stock_size": len(self.stock),
+            "is_game_over": self.is_game_over,
+        }
+
+
+app = FastAPI()
+
+# Initialize GameState
+game_state = GameState()
+
+# Create a mock deck (for the stock)
+def init_deck():
+    return [f"Card {i}" for i in range(1, 53)]  # Simple deck from 1 to 52
+
+# Initialize the stock when the game starts
+game_state.stock = init_deck()
+random.shuffle(game_state.stock)
+
+class DrawRequest(BaseModel):
+    source: str  # Can be "stock" or "discard"
+
+class DiscardRequest(BaseModel):
+    card: str
+
+@app.post("/draw")
+async def draw(request: DrawRequest):
+    card = game_state.draw_card(request.source)
+    if card:
+        return {"message": f"Drawn card: {card}"}
+    return {"message": "Invalid draw source or no cards left."}
+
+@app.post("/discard")
+async def discard(request: DiscardRequest):
+    card = game_state.discard_card(request.card)
+    if card:
+        return {"message": f"Discarded card: {card}"}
+    return {"message": "Card not in hand."}
+
+@app.get("/game_state")
+async def get_game_state():
+    return game_state.get_game_state()
+
+@app.post("/end_game")
+async def end_game():
+    game_state.is_game_over = True
+    return {"message": "Game over."}
 
 DEBUG = True
 PORT = 10001
 USER_NAME = "crustacean_cheapskate"
+
 # TODO - change your method of saving information from the very rudimentary method here
 hand = [] # list of cards in our hand
 discard = [] # list of cards organized as a stack
+cannot_discard = ""
 
 # set up the FastAPI application
 app = FastAPI()
@@ -28,7 +119,7 @@ app = FastAPI()
 # set up the API endpoints
 @app.get("/")
 async def root():
-    ''' Root API simply confirms API is up and running.'''
+    """ Root API simply confirms API is up and running."""
     return {"status": "Running"}
 
 # data class used to receive data from API POST
@@ -37,15 +128,28 @@ class GameInfo(BaseModel):
     opponent: str
     hand: str
 
+
 @app.post("/start-2p-game/")
 async def start_game(game_info: GameInfo):
-    ''' Game Server calls this endpoint to inform player a new game is starting. '''
-    # TODO - Your code here - replace the lines below
+    """ Game Server calls this endpoint to inform player a new game is starting. """
     global hand
     global discard
+
+    # Save the initial hand from the game info
     hand = game_info.hand.split(" ")
     hand.sort()
+
+    # Log the hand
     logging.info("2p game started, hand is "+str(hand))
+
+    # Save the game state to a file
+    game_state = {
+        "hand": hand,
+        "discard": discard
+    }
+    with open("game_state.json", "w") as f:
+        json.dump(game_state, f)
+
     return {"status": "OK"}
 
 # data class used to receive data from API POST
@@ -54,31 +158,48 @@ class HandInfo(BaseModel):
 
 @app.post("/start-2p-hand/")
 async def start_hand(hand_info: HandInfo):
-    ''' Game Server calls this endpoint to inform player a new hand is starting, continuing the previous game. '''
-    # TODO - Your code here
+    """ Game Server calls this endpoint to inform player a new hand is starting, continuing the previous game. """
     global hand
     global discard
-    hand = hand_info.hand.split(" ").sort()
+    discard = []
+
+    # Update the hand from the incoming data
+    hand = hand_info.hand.split(" ")
+    hand.sort()
+
+    # Log the new hand
     logging.info("2p hand started, hand is " + str(hand))
+
+    # Save the updated game state
+    game_state = {
+        "hand": hand,
+        "discard": discard
+    }
+    with open("game_state.json", "w") as f:
+        json.dump(game_state, f)
+
     return {"status": "OK"}
 
 def process_events(event_text):
-    ''' Shared function to process event text from various API endpoints '''
+    """ Shared function to process event text from various API endpoints """
     # TODO - Your code here. Everything from here to end of function
     global hand
     global discard
     for event_line in event_text.splitlines():
 
-        if ((USER_NAME + " draws") in event_line or (USER_NAME + " takes") in event_line):
+        if (USER_NAME + " draws") in event_line or (USER_NAME + " takes") in event_line:
             print("In draw, hand is "+str(hand))
+            print("Drew "+event_line.split(" ")[-1])
             hand.append(event_line.split(" ")[-1])
             hand.sort()
             print("Hand is now "+str(hand))
             logging.info("Drew a "+event_line.split(" ")[-1]+", hand is now: "+str(hand))
-        if ("discards" in event_line):  # add a card to discard pile
+        if "discards" in event_line:  # add a card to discard pile
             discard.insert(0, event_line.split(" ")[-1])
-        if ("takes" in event_line): # remove a card from discard pile
+        if "takes" in event_line: # remove a card from discard pile
             discard.pop(0)
+        if " Ends:" in event_line:
+            print(event_line)
 
 # data class used to receive data from API POST
 class UpdateInfo(BaseModel):
@@ -87,93 +208,192 @@ class UpdateInfo(BaseModel):
 
 @app.post("/update-2p-game/")
 async def update_2p_game(update_info: UpdateInfo):
-    '''
+    """
         Game Server calls this endpoint to update player on game status and other players' moves.
         Typically only called at the end of game.
-    '''
-    # TODO - Your code here - update this section if you want
+    """
+    global hand
+    global discard
+
+    # Process events from the incoming update
     process_events(update_info.event)
+
+    # Save the updated game state
+    game_state = {
+        "hand": hand,
+        "discard": discard
+    }
+    with open("game_state.json", "w") as f:
+        json.dump(game_state, f)
+
     return {"status": "OK"}
+
+def load_game_state():
+    """ Helper function to load game state from a file """
+    global hand
+    global discard
+
+    try:
+        with open("game_state.json", "r") as f:
+            game_state = json.load(f)
+            hand = game_state.get("hand", [])
+            discard = game_state.get("discard", [])
+            logging.info(f"Game state loaded: Hand - {hand}, Discard - {discard}")
+    except FileNotFoundError:
+        logging.warning("Game state file not found, starting with an empty state.")
+
 
 @app.post("/draw/")
 async def draw(update_info: UpdateInfo):
-    ''' Game Server calls this endpoint to start player's turn with draw from discard pile or draw pile.'''
+    """ Game Server calls this endpoint to start player's turn with draw from discard pile or draw pile."""
+    global cannot_discard
     # TODO - Your code here - everything from here to end of function
     process_events(update_info.event)
     if len(discard)<1: # If the discard pile is empty, draw from stock
+        cannot_discard = ""
         return {"play": "draw stock"}
-    if any(discard[0][0] in s for s in hand): # if our hand contains a matching card, take it
+    if any(discard[0][0] in s for s in hand):
+        cannot_discard = discard[0] # if our hand contains a matching card, take it
         return {"play": "draw discard"}
     return {"play": "draw stock"} # Otherwise, draw from stock
 
-@app.post("/lay-down/")
-async def lay_down(update_info: UpdateInfo):
-    ''' Game Server calls this endpoint to conclude player's turn with melding and/or discard.'''
-    # TODO - Your code here - everything from here to end of function
-    global hand
-    global discard
-    process_events(update_info.event)
-    of_a_kind_count = [0, 0, 0, 0] # how many 1 of a kind, 2 of a kind, etc in our hand
+def get_of_a_kind_count(hand):
+    of_a_kind_count = [0, 0, 0, 0]  # how many 1 of a kind, 2 of a kind, etc. in our hand
     last_val = hand[0][0]
     count = 0
     for card in hand[1:]:
         cur_val = card[0]
         if cur_val == last_val:
-            count+=1
+            count += 1
         else:
             of_a_kind_count[count] += 1
-            count=0
+            count = 0
         last_val = cur_val
-    if (count!=0): of_a_kind_count[count]+=1 # Need to get the last card fully processed if it is a match to the previous
-    if (of_a_kind_count[0]+of_a_kind_count[1]) > 1:
+    of_a_kind_count[count] += 1  # Need to get the last card fully processed
+    return of_a_kind_count
+
+def get_count(hand, card):
+    count = 0
+    for check_card in hand:
+        if check_card[0] == card[0]: count += 1
+    return count
+
+#def test_get_of_a_kind_count():
+#    assert get_of_a_kind_count(["2S", "2H", "2D", "7C", "7D", "7S", "7H", "QC", "QD", "QH", "AH"]) == [1, 0, 2, 1]
+
+def validate_discard(hand, discard_card):
+    """ Validate that the player can discard the chosen card """
+    if discard_card not in hand:
+        return False  # Card not in hand
+    return True
+
+
+@app.post("/player-turn/")
+async def player_turn(action: str):
+    global current_turn
+    global hand
+    global discard
+
+    if current_turn == "Player 1":
+        if action == "discard":
+            discard_card = hand.pop()  # Example: Remove a card from hand
+            if not validate_discard(hand, discard_card):
+                return {"error": "Cannot discard that card"}
+            discard.append(discard_card)
+        # Other actions like draw, meld...
+
+        current_turn = "Player 2"
+    elif current_turn == "Player 2":
+        if action == "discard":
+            discard_card = hand.pop()  # Example: Remove a card from hand
+            if not validate_discard(hand, discard_card):
+                return {"error": "Cannot discard that card"}
+            discard.append(discard_card)
+        # Other actions like draw, meld...
+
+        current_turn = "Player 1"
+
+    # save_game_state()
+    return {"status": "OK", "current_turn": current_turn}
+
+def check_end_of_game():
+    """ Check if any player has completed their hand (no cards left) """
+    if len(hand) == 0:  # Player has no cards left
+        return True
+    return False
+
+
+
+@app.post("/lay-down/")
+async def lay_down(update_info: UpdateInfo):
+    """ Game Server calls this endpoint to conclude player's turn with melding and/or discard."""
+    # TODO - Your code here - everything from here to end of function
+    global hand
+    global discard
+    global cannot_discard
+    process_events(update_info.event)
+    of_a_kind_count = get_of_a_kind_count(hand)
+    if (of_a_kind_count[0]+(of_a_kind_count[1]*2)) > 1:
+        print("Need to discard")
         # Too many unmeldable cards, need to discard
 
         # If we have a 1 of a kind, discard the highest
-        if (of_a_kind_count[0]>0):
-            for i in range(len(hand)-1,-1, -1):
-                if (i==0):
+
+        if of_a_kind_count[0]>0:
+            print("Discarding a single card")
+            logging.info("Discarding a single card")
+
+            # edge case - the last card is 1 of a kind
+            if hand[-1][0] != hand[-2][0]:
+                logging.info("Discarding " + hand[-1])
+                return {"play": "discard " + hand.pop()}
+
+            for i in range(len(hand)-2,-1, -1):
+                if i==0:
                     logging.info("Discarding "+hand[0])
                     return {"play":"discard "+hand.pop(0)}
-                if hand[i][0] != hand[i-1][0]:
+                if hand[i][0] != hand[i-1][0] and hand[i][0] != hand[i+1][0]:
                     logging.info("Discarding "+hand[i])
                     return {"play":"discard "+hand.pop(i)}
 
-        # discard the highest 2 of a kind
-            i=len(hand)-1
-            while (i>0):
-                if (i==1):
-                    logging.info("Discarding "+hand[1])
-                    return {"play":"discard "+hand.pop(1)}
-                if hand[i][0] != hand[i-2][0]:
+        elif of_a_kind_count[1]>=1:
+            print("Discarding two of a kind, cannot_discard = "+cannot_discard)
+            for i in range(len(hand)-1,-1, -1):
+                if hand[i]!=cannot_discard and get_count(hand, hand[i]) == 2:
                     logging.info("Discarding "+hand[i])
-                    return {"play":"discard "+hand.pop(i)}
-                while hand[i][0] == hand[i-1][0]: i-=1 #skip over meldable sets
-                i-=1
+                    return {"play": "discard " + hand.pop(i)}
+
+            logging.info("Discarding " + hand[i])
+            return {"play": "discard " + hand.pop(i)}
+
 
     # We should be able to meld.
 
-    # First, find the card we discard
+    # First, find the card we discard - if needed
     discard_string = ""
     print(of_a_kind_count)
-    # TODO - Dole - Need to add edge case for last card being a one-of-a-kind
-    if (of_a_kind_count[0] > 0):
-        for i in range(len(hand)-1, -1, -1):
-            if (i == 0):
-                discard_string = " discard " + hand.pop(0)
-                break
-            if hand[i][0] != hand[i - 1][0]:
-                discard_string = " discard " + hand.pop(i)
-                break
+
+    if of_a_kind_count[0] > 0:
+        if hand[-1][0] != hand[-2][0]:
+            discard_string = " discard " + hand.pop()
+        else:
+            for i in range(len(hand)-2, -1, -1):
+                if i == 0:
+                    discard_string = " discard " + hand.pop(0)
+                    break
+                if hand[i][0] != hand[i - 1][0] and hand[i][0] != hand[i + 1][0]:
+                    discard_string = " discard " + hand.pop(i)
+                    break
 
     # generate our list of meld
     play_string = ""
     last_card = ""
-    while (len(hand) > 0):
+    while len(hand) > 0:
         card = hand.pop(0)
-        if (str(card) != last_card):
+        if str(card)[0] != last_card:
             play_string += "meld "
         play_string += str(card) + " "
-        last_card = str(card)
+        last_card = str(card)[0]
 
     # remove the extra space, and add in our discard if any
     play_string = play_string[:-1]
@@ -184,7 +404,7 @@ async def lay_down(update_info: UpdateInfo):
 
 @app.get("/shutdown")
 async def shutdown_API():
-    ''' Game Server calls this endpoint to shut down the player's client after testing is completed.  Only used if DEBUG is True. '''
+    """ Game Server calls this endpoint to shut down the player's client after testing is completed.  Only used if DEBUG is True. """
     os.kill(os.getpid(), signal.SIGTERM)
     logging.info("Player client shutting down...")
     return fastapi.Response(status_code=200, content='Server shutting down...')
@@ -193,15 +413,21 @@ async def shutdown_API():
 ''' Main code here - registers the player with the server via API call, and then launches the API to receive game information '''
 if __name__ == "__main__":
 
-    if (DEBUG):
+    if DEBUG:
         url = "http://127.0.0.1:16200/test"
 
         # TODO - Change logging.basicConfig if you want
-        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(filename="RummyPlayer.log", format='%(asctime)s - %(levelname)s - %(message)s',
+                        datefmt='%Y-%m-%d %H:%M:%S', level=logging.INFO)
+
     else:
         url = "http://127.0.0.1:16200/register"
         # TODO - Change logging.basicConfig if you want
-        logging.basicConfig(level=logging.WARNING)
+        logging.basicConfig(filename="RummyPlayer.log", format='%(asctime)s - %(levelname)s - %(message)s',
+                           datefmt='%Y-%m-%d %H:%M:%S', level=logging.WARNING)
+
+    load_game_state()
+
 
     payload = {
         "name": USER_NAME,
