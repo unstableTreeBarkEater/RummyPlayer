@@ -61,7 +61,6 @@ class GameState:
             "is_game_over": self.is_game_over,
         }
 
-
 app = FastAPI()
 
 # Initialize GameState
@@ -81,12 +80,6 @@ class DrawRequest(BaseModel):
 class DiscardRequest(BaseModel):
     card: str
 
-@app.post("/draw")
-async def draw(request: DrawRequest):
-    card = game_state.draw_card(request.source)
-    if card:
-        return {"message": f"Drawn card: {card}"}
-    return {"message": "Invalid draw source or no cards left."}
 
 @app.post("/discard")
 async def discard(request: DiscardRequest):
@@ -110,11 +103,8 @@ USER_NAME = "crustacean_cheapskate"
 
 # TODO - change your method of saving information from the very rudimentary method here
 hand = [] # list of cards in our hand
-discard = [] # list of cards organized as a stack
 cannot_discard = ""
 
-# set up the FastAPI application
-app = FastAPI()
 
 # set up the API endpoints
 @app.get("/")
@@ -245,17 +235,25 @@ def load_game_state():
 
 @app.post("/draw/")
 async def draw(update_info: UpdateInfo):
-    """ Game Server calls this endpoint to start player's turn with draw from discard pile or draw pile."""
+    """Game Server calls this endpoint to start player's turn with a draw from either the discard or stock pile."""
     global cannot_discard
-    # TODO - Your code here - everything from here to end of function
     process_events(update_info.event)
-    if len(discard)<1: # If the discard pile is empty, draw from stock
+    # If both stock and discard are empty, return an error (game should handle this case)
+    if not discard and not stock:
+        return {"play": "error", "message": "No cards left to draw"}
+    # If discard pile is empty, draw from stock
+    if not discard:
         cannot_discard = ""
         return {"play": "draw stock"}
-    if any(discard[0][0] in s for s in hand):
-        cannot_discard = discard[0] # if our hand contains a matching card, take it
+
+    top_discard = discard[0]  # The top card from the discard pile
+
+    # Check if the top discard card helps form a meld
+    if any(top_discard[0] == card[0] for card in hand):  # Matching rank
+        cannot_discard = top_discard
         return {"play": "draw discard"}
-    return {"play": "draw stock"} # Otherwise, draw from stock
+
+    return {"play": "draw stock"}  # Otherwise, draw from stock
 
 def get_of_a_kind_count(hand):
     of_a_kind_count = [0, 0, 0, 0]  # how many 1 of a kind, 2 of a kind, etc. in our hand
@@ -278,8 +276,6 @@ def get_count(hand, card):
         if check_card[0] == card[0]: count += 1
     return count
 
-#def test_get_of_a_kind_count():
-#    assert get_of_a_kind_count(["2S", "2H", "2D", "7C", "7D", "7S", "7H", "QC", "QD", "QH", "AH"]) == [1, 0, 2, 1]
 
 def validate_discard(hand, discard_card):
     """ Validate that the player can discard the chosen card """
@@ -322,85 +318,173 @@ def check_end_of_game():
         return True
     return False
 
-
-
 @app.post("/lay-down/")
 async def lay_down(update_info: UpdateInfo):
-    """ Game Server calls this endpoint to conclude player's turn with melding and/or discard."""
-    # TODO - Your code here - everything from here to end of function
     global hand
     global discard
     global cannot_discard
     process_events(update_info.event)
-    of_a_kind_count = get_of_a_kind_count(hand)
-    if (of_a_kind_count[0]+(of_a_kind_count[1]*2)) > 1:
-        print("Need to discard")
-        # Too many unmeldable cards, need to discard
 
-        # If we have a 1 of a kind, discard the highest
+    melds = get_melds(hand)
 
-        if of_a_kind_count[0]>0:
-            print("Discarding a single card")
-            logging.info("Discarding a single card")
+    if melds:
+        play_string = ""
+        cards_to_remove = []
 
-            # edge case - the last card is 1 of a kind
-            if hand[-1][0] != hand[-2][0]:
-                logging.info("Discarding " + hand[-1])
-                return {"play": "discard " + hand.pop()}
-
-            for i in range(len(hand)-2,-1, -1):
-                if i==0:
-                    logging.info("Discarding "+hand[0])
-                    return {"play":"discard "+hand.pop(0)}
-                if hand[i][0] != hand[i-1][0] and hand[i][0] != hand[i+1][0]:
-                    logging.info("Discarding "+hand[i])
-                    return {"play":"discard "+hand.pop(i)}
-
-        elif of_a_kind_count[1]>=1:
-            print("Discarding two of a kind, cannot_discard = "+cannot_discard)
-            for i in range(len(hand)-1,-1, -1):
-                if hand[i]!=cannot_discard and get_count(hand, hand[i]) == 2:
-                    logging.info("Discarding "+hand[i])
-                    return {"play": "discard " + hand.pop(i)}
-
-            logging.info("Discarding " + hand[i])
-            return {"play": "discard " + hand.pop(i)}
-
-
-    # We should be able to meld.
-
-    # First, find the card we discard - if needed
-    discard_string = ""
-    print(of_a_kind_count)
-
-    if of_a_kind_count[0] > 0:
-        if hand[-1][0] != hand[-2][0]:
-            discard_string = " discard " + hand.pop()
-        else:
-            for i in range(len(hand)-2, -1, -1):
-                if i == 0:
-                    discard_string = " discard " + hand.pop(0)
-                    break
-                if hand[i][0] != hand[i - 1][0] and hand[i][0] != hand[i + 1][0]:
-                    discard_string = " discard " + hand.pop(i)
-                    break
-
-    # generate our list of meld
-    play_string = ""
-    last_card = ""
-    while len(hand) > 0:
-        card = hand.pop(0)
-        if str(card)[0] != last_card:
+        for meld in melds:
             play_string += "meld "
-        play_string += str(card) + " "
-        last_card = str(card)[0]
+            for card in meld:
+                play_string += str(card) + " "
+                cards_to_remove.append(card)
 
-    # remove the extra space, and add in our discard if any
-    play_string = play_string[:-1]
-    play_string += discard_string
+        # Remove melded cards from hand
+        for card in cards_to_remove:
+            hand.remove(card)
 
-    logging.info("Playing: "+play_string)
-    return {"play":play_string}
+        # Add discard if any cards are left, discard the highest
+        if hand:
+            discard_card = hand.pop()
+            play_string += "discard " + str(discard_card)
+
+        play_string = play_string.strip()  # Remove trailing space
+        logging.info("Playing: " + play_string)
+        return {"play": play_string}
+
+    else:  # No melds found, just discard the highest card
+        if hand:
+            discard_card = hand.pop()
+            play_string = "discard " + str(discard_card)
+            logging.info("Playing: " + play_string)
+            return {"play": play_string}
+        else:
+            return {"play": "error"}  # No cards left to play
+
+    # """ Game Server calls this endpoint to conclude player's turn with melding and/or discard."""
+    # # TODO - Your code here - everything from here to end of function
+    # global hand
+    # global discard
+    # global cannot_discard
+    # process_events(update_info.event)
+    # of_a_kind_count = get_of_a_kind_count(hand)
+    # if (of_a_kind_count[0]+(of_a_kind_count[1]*2)) > 1:
+    #     print("Need to discard")
+    #     # Too many unmeldable cards, need to discard
+    #
+    #     # If we have a 1 of a kind, discard the highest
+    #
+    #     if of_a_kind_count[0]>0:
+    #         print("Discarding a single card")
+    #         logging.info("Discarding a single card")
+    #
+    #         # edge case - the last card is 1 of a kind
+    #         if hand[-1][0] != hand[-2][0]:
+    #             logging.info("Discarding " + hand[-1])
+    #             return {"play": "discard " + hand.pop()}
+    #
+    #         for i in range(len(hand)-2,-1, -1):
+    #             if i==0:
+    #                 logging.info("Discarding "+hand[0])
+    #                 return {"play":"discard "+hand.pop(0)}
+    #             if hand[i][0] != hand[i-1][0] and hand[i][0] != hand[i+1][0]:
+    #                 logging.info("Discarding "+hand[i])
+    #                 return {"play":"discard "+hand.pop(i)}
+    #
+    #     elif of_a_kind_count[1]>=1:
+    #         print("Discarding two of a kind, cannot_discard = "+cannot_discard)
+    #         for i in range(len(hand)-1,-1, -1):
+    #             if hand[i]!=cannot_discard and get_count(hand, hand[i]) == 2:
+    #                 logging.info("Discarding "+hand[i])
+    #                 return {"play": "discard " + hand.pop(i)}
+    #
+    #         logging.info("Discarding " + hand[i])
+    #         return {"play": "discard " + hand.pop(i)}
+    #
+    #
+    # # We should be able to meld.
+    #
+    # # First, find the card we discard - if needed
+    # discard_string = ""
+    # print(of_a_kind_count)
+    #
+    # if of_a_kind_count[0] > 0:
+    #     if hand[-1][0] != hand[-2][0]:
+    #         discard_string = " discard " + hand.pop()
+    #     else:
+    #         for i in range(len(hand)-2, -1, -1):
+    #             if i == 0:
+    #                 discard_string = " discard " + hand.pop(0)
+    #                 break
+    #             if hand[i][0] != hand[i - 1][0] and hand[i][0] != hand[i + 1][0]:
+    #                 discard_string = " discard " + hand.pop(i)
+    #                 break
+    #
+    # # generate our list of meld
+    # play_string = ""
+    # last_card = ""
+    # while len(hand) > 0:
+    #     card = hand.pop(0)
+    #     if str(card)[0] != last_card:
+    #         play_string += "meld "
+    #     play_string += str(card) + " "
+    #     last_card = str(card)[0]
+    #
+    # # remove the extra space, and add in our discard if any
+    # play_string = play_string[:-1]
+    # play_string += discard_string
+    #
+    # logging.info("Playing: "+play_string)
+    # return {"play":play_string}
+
+def get_melds(hand):
+    """Identifies and returns valid melds from a hand."""
+    hand.sort()
+    melds = []
+    i = 0
+    while i < len(hand):
+        current_card = hand[i]
+        run = [current_card]
+        kind = [current_card]
+        j = i + 1
+        while j < len(hand) and hand[j][0] == current_card[0]:  # Check for same rank (kind)
+            kind.append(hand[j])
+            j += 1
+
+        # Run Detection (Corrected):
+        numerical_rank_current = get_numerical_rank(current_card)
+        while j < len(hand):
+            next_card = hand[j]
+            numerical_rank_next = get_numerical_rank(next_card)
+            if next_card[-1] == current_card[-1] and numerical_rank_next == numerical_rank_current + (j - i):
+                run.append(next_card)
+                j += 1
+            else:
+                break
+
+
+        if len(kind) >= 3:
+            melds.append(kind)
+        if len(run) >= 3:
+            melds.append(run)
+        i = j
+
+    return melds
+
+def get_numerical_rank(card):
+    """Converts card rank to a numerical value (A=1, J=11, Q=12, K=13)."""
+    rank = card[:-1]
+    try:
+        return int(rank)
+    except ValueError:
+        if rank == 'A':
+            return 1
+        elif rank == 'J':
+            return 11
+        elif rank == 'Q':
+            return 12
+        elif rank == 'K':
+            return 13
+        else:
+            return 0  # Handle invalid ranks (shouldn't happen)
 
 @app.get("/shutdown")
 async def shutdown_API():
@@ -435,6 +519,7 @@ if __name__ == "__main__":
         "port": str(PORT)
     }
 
+    # noinspection PyBroadException
     try:
         # Call the URL to register client with the game server
         response = requests.post(url, json=payload)
