@@ -1,4 +1,3 @@
-
 import requests
 from fastapi import FastAPI
 import fastapi
@@ -18,48 +17,15 @@ Revision History
 1.2 - Bugs fixed and player improved, should no longer forfeit
 """
 
+# TODO - Change the PORT and USER_NAME Values before running
 DEBUG = True
 PORT = 10001
-USER_NAME = "crustacean_cheapskate"
+USER_NAME = "j"
 # TODO - change your method of saving information from the very rudimentary method here
 hand = [] # list of cards in our hand
 discard = [] # list of cards organized as a stack
 cannot_discard = ""
 
-class RummyGameState:
-    def __init__(self):
-        self.hand = []
-        self.discard_pile = []
-        self.cannot_discard = ""
-        self.opponent_name = ""  # Store opponent's name
-        self.game_id = ""       # Store the game ID
-
-    def reset_hand(self, hand_str):
-        self.hand = hand_str.split(" ")
-        self.hand.sort()
-
-    def add_to_hand(self, card):
-        self.hand.append(card)
-        self.hand.sort()
-
-    def add_to_discard(self, card):
-        self.discard_pile.insert(0, card)
-
-    def remove_from_discard(self):
-        if self.discard_pile:  # Check if discard pile is not empty
-            return self.discard_pile.pop(0)
-        return None  # Or handle the case where the discard pile is empty
-
-    def set_cannot_discard(self, card):
-        self.cannot_discard = card
-
-    def clear_cannot_discard(self):
-        self.cannot_discard = ""
-
-    def __str__(self):  # For easy debugging/logging
-        return f"Game ID: {self.game_id}\nOpponent: {self.opponent_name}\nHand: {self.hand}\nDiscard: {self.discard_pile}\nCannot Discard: {self.cannot_discard}"
-
-game_state = RummyGameState()
 # set up the FastAPI application
 app = FastAPI()
 
@@ -109,16 +75,16 @@ def process_events(event_text):
     global discard
     for event_line in event_text.splitlines():
 
-        if ((USER_NAME + " draws") in event_line or (USER_NAME + " takes") in event_line):
+        if (USER_NAME + " draws") in event_line or (USER_NAME + " takes") in event_line:
             print("In draw, hand is "+str(hand))
             print("Drew "+event_line.split(" ")[-1])
             hand.append(event_line.split(" ")[-1])
             hand.sort()
             print("Hand is now "+str(hand))
             logging.info("Drew a "+event_line.split(" ")[-1]+", hand is now: "+str(hand))
-        if ("discards" in event_line):  # add a card to discard pile
+        if "discards" in event_line:  # add a card to discard pile
             discard.insert(0, event_line.split(" ")[-1])
-        if ("takes" in event_line): # remove a card from discard pile
+        if "takes" in event_line: # remove a card from discard pile
             discard.pop(0)
         if " Ends:" in event_line:
             print(event_line)
@@ -154,7 +120,7 @@ async def draw(update_info: UpdateInfo):
     return {"play": "draw stock"} # Otherwise, draw from stock
 
 def get_of_a_kind_count(hand):
-    of_a_kind_count = [0, 0, 0, 0]  # how many 1 of a kind, 2 of a kind, etc in our hand
+    of_a_kind_count = [0, 0, 0, 0]  # how many 1 of a kind, 2 of a kind, etc. in our hand
     last_val = hand[0][0]
     count = 0
     for card in hand[1:]:
@@ -197,12 +163,12 @@ async def lay_down(update_info: UpdateInfo):
             logging.info("Discarding a single card")
 
             # edge case - the last card is 1 of a kind
-            if (hand[-1][0] != hand[-2][0]):
+            if hand[-1][0] != hand[-2][0]:
                 logging.info("Discarding " + hand[-1])
                 return {"play": "discard " + hand.pop()}
 
             for i in range(len(hand)-2,-1, -1):
-                if (i==0):
+                if i==0:
                     logging.info("Discarding "+hand[0])
                     return {"play":"discard "+hand.pop(0)}
                 if hand[i][0] != hand[i-1][0] and hand[i][0] != hand[i+1][0]:
@@ -212,7 +178,7 @@ async def lay_down(update_info: UpdateInfo):
         elif of_a_kind_count[1]>=1:
             print("Discarding two of a kind, cannot_discard = "+cannot_discard)
             for i in range(len(hand)-1,-1, -1):
-                if (hand[i]!=cannot_discard and get_count(hand,hand[i]) == 2):
+                if hand[i]!=cannot_discard and get_count(hand, hand[i]) == 2:
                     logging.info("Discarding "+hand[i])
                     return {"play": "discard " + hand.pop(i)}
 
@@ -228,12 +194,12 @@ async def lay_down(update_info: UpdateInfo):
 
 
 
-    if (of_a_kind_count[0] > 0):
+    if of_a_kind_count[0] > 0:
         if hand[-1][0] != hand[-2][0]:
             discard_string = " discard " + hand.pop()
         else:
             for i in range(len(hand)-2, -1, -1):
-                if (i == 0):
+                if i == 0:
                     discard_string = " discard " + hand.pop(0)
                     break
                 if hand[i][0] != hand[i - 1][0] and hand[i][0] != hand[i + 1][0]:
@@ -243,9 +209,9 @@ async def lay_down(update_info: UpdateInfo):
     # generate our list of meld
     play_string = ""
     last_card = ""
-    while (len(hand) > 0):
+    while len(hand) > 0:
         card = hand.pop(0)
-        if (str(card)[0] != last_card):
+        if str(card)[0] != last_card:
             play_string += "meld "
         play_string += str(card) + " "
         last_card = str(card)[0]
@@ -268,7 +234,7 @@ async def shutdown_API():
 ''' Main code here - registers the player with the server via API call, and then launches the API to receive game information '''
 if __name__ == "__main__":
 
-    if (DEBUG):
+    if DEBUG:
         url = "http://127.0.0.1:16200/test"
 
         # TODO - Change logging.basicConfig if you want
