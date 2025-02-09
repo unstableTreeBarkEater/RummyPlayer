@@ -41,7 +41,7 @@ class GameInfo(BaseModel):
     opponent: str
     hand: str
 
-@app.post("/start-2p-game/")
+@app.post("/start-2p-game/") #
 async def start_game(game_info: GameInfo):
     """ Game Server calls this endpoint to inform player a new game is starting. """
     # TODO - Your code here - replace the lines below
